@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>ClinData MVP</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f6fa; }
+        .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; padding: 20px 30px; }
+        .header h1 { font-size: 24px; }
+        .header p { opacity: 0.7; margin-top: 4px; }
+        .container { max-width: 1200px; margin: 20px auto; padding: 0 20px; }
+        .card { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+        .card h2 { font-size: 18px; margin-bottom: 16px; color: #1a1a2e; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        textarea { width: 100%; height: 120px; font-family: 'Fira Code', monospace; font-size: 13px;
+                   border: 1px solid #ddd; border-radius: 8px; padding: 12px; resize: vertical; }
+        button { background: #1a1a2e; color: white; border: none; padding: 10px 24px; border-radius: 8px;
+                 cursor: pointer; font-size: 14px; margin-top: 8px; }
+        button:hover { background: #16213e; }
+        button.secondary { background: #e74c3c; }
+        select, input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; font-size: 13px; }
+        th { background: #f8f9fa; font-weight: 600; }
+        .result { background: #f8f9fa; border-radius: 8px; padding: 16px; margin-top: 12px; font-size: 13px;
+                  max-height: 400px; overflow: auto; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 4px; }
+        .tag-ae { background: #ffeaa7; color: #d63031; }
+        .tag-lb { background: #74b9ff; color: #0984e3; }
+        .tag-vs { background: #55efc4; color: #00b894; }
+        .tag-cm { background: #a29bfe; color: #6c5ce7; }
+        #chart-area { width: 100%; min-height: 400px; }
+        .upload-zone { border: 2px dashed #ccc; border-radius: 12px; padding: 40px; text-align: center;
+                       cursor: pointer; transition: all 0.3s; }
+        .upload-zone:hover { border-color: #1a1a2e; background: #f8f9fa; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧬 ClinData MVP</h1>
+        <p>临床数据智能决策舱 — SQL ETL + 可视化引擎</p>
+    </div>
+
+    <div class="container">
+        <!-- 数据上传 -->
+        <div class="card">
+            <h2>📁 数据上传</h2>
+            <div class="grid">
+                <div>
+                    <div class="upload-zone" onclick="document.getElementById('file-input').click()">
+                        <p style="font-size:40px">📊</p>
+                        <p>点击或拖拽上传 CSV/Excel/HTML</p>
+                        <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.html"
+                               style="display:none" onchange="uploadFile(this)">
+                    </div>
+                    <div style="margin-top:12px">
+                        <input type="number" id="project-id" value="1" placeholder="Project ID" style="width:120px">
+                        <select id="source-type">
+                            <option value="unknown">自动识别</option>
+                            <option value="ae">AE (不良事件)</option>
+                            <option value="lb">LB (实验室)</option>
+                            <option value="vs">VS (生命体征)</option>
+                            <option value="cm">CM (用药)</option>
+                            <option value="dm">DM (受试者)</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="upload-result" class="result">等待上传...</div>
+            </div>
+        </div>
+
+        <!-- SQL 查询 -->
+        <div class="card">
+            <h2>🔍 SQL 查询 / ETL</h2>
+            <textarea id="sql-input" placeholder="SELECT * FROM raw_xxx LIMIT 10">SELECT name FROM sqlite_master WHERE type='table';</textarea>
+            <div style="margin-top:8px">
+                <button onclick="runSql()">▶ 执行 SQL</button>
+                <button class="secondary" onclick="listTables()">📋 列出表</button>
+            </div>
+            <div id="sql-result" class="result">等待查询...</div>
+        </div>
+
+        <!-- 可视化 -->
+        <div class="card">
+            <h2>📈 可视化</h2>
+            <div style="margin-bottom:12px">
+                <select id="chart-type">
+                    <option value="hy_law">海氏法则散点图 (Hy's Law)</option>
+                    <option value="bar">柱状图</option>
+                    <option value="box">箱线图</option>
+                </select>
+                <input type="text" id="chart-table" placeholder="表名" style="width:200px">
+                <input type="text" id="chart-x" placeholder="X 字段" style="width:120px">
+                <input type="text" id="chart-y" placeholder="Y 字段" style="width:120px">
+                <button onclick="generateChart()">🎨 生成图表</button>
+            </div>
+            <div id="chart-area"></div>
+        </div>
+    </div>
+
+    <script>
+        const API = '';
+
+        async function uploadFile(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const form = new FormData();
+            form.append('file', file);
+            const pid = document.getElementById('project-id').value;
+            const st = document.getElementById('source-type').value;
+            document.getElementById('upload-result').innerHTML = '⏳ 上传中...';
+            try {
+                const r = await fetch(`${API}/api/datasets/upload?project_id=${pid}&source_type=${st}`, {
+                    method: 'POST', body: form
+                });
+                const data = await r.json();
+                document.getElementById('upload-result').innerHTML =
+                    `<b>✅ 上传成功</b><br>表名: ${data.table_name}<br>` +
+                    `行数: ${data.row_count} | 列数: ${data.column_count}<br>` +
+                    `字段: ${data.columns.join(', ')}`;
+            } catch(e) {
+                document.getElementById('upload-result').innerHTML = `❌ 错误: ${e.message}`;
+            }
+        }
+
+        async function runSql() {
+            const sql = document.getElementById('sql-input').value;
+            document.getElementById('sql-result').innerHTML = '⏳ 执行中...';
+            try {
+                const r = await fetch(`${API}/api/etl/sql`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({sql})
+                });
+                const data = await r.json();
+                if (data.columns && data.data) {
+                    let html = `<table><tr>${data.columns.map(c => `<th>${c}</th>`).join('')}</tr>`;
+                    data.data.forEach(row => {
+                        html += `<tr>${data.columns.map(c => `<td>${row[c] ?? ''}</td>`).join('')}</tr>`;
+                    });
+                    html += `</table><p style="margin-top:8px;color:#888">${data.row_count} 行</p>`;
+                    document.getElementById('sql-result').innerHTML = html;
+                } else {
+                    document.getElementById('sql-result').innerHTML = JSON.stringify(data, null, 2);
+                }
+            } catch(e) {
+                document.getElementById('sql-result').innerHTML = `❌ ${e.message}`;
+            }
+        }
+
+        async function listTables() {
+            document.getElementById('sql-result').innerHTML = '⏳ 加载中...';
+            const r = await fetch(`${API}/api/etl/tables`);
+            const data = await r.json();
+            document.getElementById('sql-result').innerHTML =
+                `<b>数据库中的表:</b><br>` + data.tables.map(t => `• ${t}`).join('<br>');
+        }
+
+        async function generateChart() {
+            const chartType = document.getElementById('chart-type').value;
+            const table = document.getElementById('chart-table').value;
+            const x = document.getElementById('chart-x').value;
+            const y = document.getElementById('chart-y').value;
+            try {
+                const r = await fetch(`${API}/api/viz/chart`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        chart_type: chartType,
+                        table_name: table,
+                        params: {x, y, title: chartType}
+                    })
+                });
+                const data = await r.json();
+                Plotly.newPlot('chart-area', data.chart.data, data.chart.layout);
+            } catch(e) {
+                document.getElementById('chart-area').innerHTML = `❌ ${e.message}`;
+            }
+        }
+
+        // 页面加载时列出表
+        listTables();
+    </script>
+</body>
+</html>
